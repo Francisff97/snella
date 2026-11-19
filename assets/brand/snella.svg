@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+<rect width="512" height="512" fill="#3A3ADD"/>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <!-- crocini, come nella traccia -->
+  <path d="M42 168 V96 a18 18 0 0 1 18 -18 H124" stroke="#EE6352" stroke-width="20"/>
+  <path d="M470 344 V416 a18 18 0 0 1 -18 18 H388" stroke="#EE6352" stroke-width="20"/>
+  <!-- la foto, stretta e alta -->
+  <rect x="180" y="150" width="152" height="212" rx="26" stroke="#FFFFFF" stroke-width="22"/>
+  <circle cx="226" cy="204" r="17" fill="#FFFFFF" stroke="none"/>
+  <path d="M182 330 L236 272 L262 300 L286 278 L330 326" stroke="#FFFFFF" stroke-width="22"/>
+  <!-- le frecce che la stringono -->
+  <path d="M96 256 H138 M116 232 L140 256 L116 280" stroke="#FFFFFF" stroke-width="22"/>
+  <path d="M416 256 H374 M396 232 L372 256 L396 280" stroke="#FFFFFF" stroke-width="22"/>
+</g></svg>

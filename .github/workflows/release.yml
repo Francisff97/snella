@@ -20,6 +20,22 @@ jobs:
       - run: flutter pub get
       - run: flutter test
       - run: flutter build macos --release
+      # ffmpeg per i video: un unico binario per Apple Silicon e Intel, dentro l'app.
+      - name: ffmpeg
+        run: |
+          BASE=https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0
+          curl -fsSL -o ffmpeg-arm64.gz $BASE/ffmpeg-darwin-arm64.gz
+          curl -fsSL -o ffmpeg-x64.gz $BASE/ffmpeg-darwin-x64.gz
+          gunzip ffmpeg-arm64.gz ffmpeg-x64.gz
+          lipo -create ffmpeg-arm64 ffmpeg-x64 -output ffmpeg || cp ffmpeg-arm64 ffmpeg
+          chmod +x ffmpeg
+          lipo -info ffmpeg
+          ./ffmpeg -hide_banner -encoders | grep -E 'libx264|libvpx-vp9'
+          APP=build/macos/Build/Products/Release/Snella.app
+          cp ffmpeg "$APP/Contents/MacOS/ffmpeg"
+          cp third_party/FFMPEG.txt "$APP/Contents/Resources/FFMPEG.txt"
+          codesign --force -s - "$APP/Contents/MacOS/ffmpeg"
+          codesign --force --deep -s - "$APP"
       - name: Zip
         run: |
           cd build/macos/Build/Products/Release
@@ -38,6 +54,14 @@ jobs:
           channel: stable
       - run: flutter pub get
       - run: flutter build windows --release
+      # ffmpeg per i video, accanto a snella.exe.
+      - name: ffmpeg
+        shell: bash
+        run: |
+          curl -fsSL -o ffmpeg.gz https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-win32-x64.gz
+          gunzip -c ffmpeg.gz > build/windows/x64/runner/Release/ffmpeg.exe
+          build/windows/x64/runner/Release/ffmpeg.exe -hide_banner -encoders | grep -E 'libx264|libvpx-vp9'
+          cp third_party/FFMPEG.txt build/windows/x64/runner/Release/FFMPEG.txt
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Snella-Windows.zip

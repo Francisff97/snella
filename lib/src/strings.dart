@@ -12,16 +12,21 @@ class S {
 
   String t(String itText, String enText) => it ? itText : enText;
 
-  String get tagline => t('Foto pronte per il web', 'Photos ready for the web');
-  String get dropTitle => t('Trascina qui\nle foto', 'Drop your\nphotos here');
+  String get tagline => t('Foto e video pronti per il web', 'Photos and videos ready for the web');
+  String get dropTitle => t('Trascina qui\nfoto e video', 'Drop photos\nand videos');
   String get dropHint => t(
-    'JPG, PNG, WebP, TIFF. Anche quelle da 8 MB che ti manda il cliente.',
-    'JPG, PNG, WebP, TIFF. Even the 8 MB ones your client sends you.',
+    'Foto JPG, PNG, WebP, TIFF e video MP4 o MOV. Anche quelli enormi che ti manda il cliente.',
+    'JPG, PNG, WebP, TIFF photos and MP4 or MOV videos. Even the huge ones your client sends you.',
   );
   String get dropActive => t('Lasciale andare', 'Let them go');
   String get chooseFiles => t('Scegli file', 'Choose files');
   String get clear => t('Svuota', 'Clear');
   String photos(int n) => n == 1 ? t('1 foto', '1 photo') : t('$n foto', '$n photos');
+  String videos(int n) => n == 1 ? t('1 video', '1 video') : t('$n video', '$n videos');
+  String items(int photosCount, int videosCount) => [
+    if (photosCount > 0 || videosCount == 0) photos(photosCount),
+    if (videosCount > 0) videos(videosCount),
+  ].join(' · ');
 
   String get settings => t('Impostazioni', 'Settings');
   String get keyword => t('Parola chiave', 'Keyword');
@@ -46,9 +51,23 @@ class S {
   String get srcset => t('Snippet HTML con srcset', 'HTML snippet with srcset');
   String get alwaysStripped => t('EXIF e GPS rimossi sempre', 'EXIF and GPS always removed');
 
+  String get video => t('Video', 'Video');
+  String get videoFormats => t('Formati video', 'Video formats');
+  String get videoWidths => t('Larghezze video', 'Video widths');
+  String get videoHelp => t(
+    'MP4 va ovunque. WebM pesa meno ma è più lento da creare.',
+    'MP4 plays everywhere. WebM is lighter but slower to create.',
+  );
+  String get duration => t('Durata', 'Length');
+  String get whole => t('Intero', 'Full');
+  String get mute => t('Senza audio (video di sfondo)', 'No audio (background video)');
+  String get poster => t('Poster dal primo secondo', 'Poster from the first second');
+  String get noFfmpeg => t('ffmpeg non trovato', 'ffmpeg not found');
+  String workingVideo(int n, int total, int pct) => t('Video $n di $total · $pct%', 'Video $n of $total · $pct%');
+
   String get run => t('Rendile snelle', 'Slim them down');
   String working(int done, int total) => t('Lavoro… $done di $total', 'Working… $done of $total');
-  String get addPhotosFirst => t('Prima aggiungi le foto', 'Add some photos first');
+  String get addPhotosFirst => t('Prima aggiungi foto o video', 'Add photos or videos first');
 
   String get resultsTitle => t('Fatto.', 'Done.');
   String fromTo(String from, String to) => t('Da $from a $to', 'From $from to $to');
@@ -63,16 +82,18 @@ class S {
   String get madeBy => t('Fatta da Francesco Ferri', 'Made by Francesco Ferri');
   String get madeBySub => t('Designer e sviluppatore web', 'Web designer & developer');
   String get free => t(
-    'Gratis. Nessun account. Le foto non lasciano il tuo computer.',
-    'Free. No account. Your photos never leave your computer.',
+    'Gratis. Nessun account. I file non lasciano il tuo computer.',
+    'Free. No account. Your files never leave your computer.',
   );
   String get about => t('Info', 'About');
   String get aboutBody => t(
     'Snella prende le foto, le raddrizza, le ridimensiona alle larghezze che ti servono, '
         'toglie EXIF e coordinate GPS e le salva in WebP o JPEG con nomi pronti per la SEO. '
+        'Fa lo stesso con i video: MP4 e WebM leggeri, senza audio se vuoi, con il poster. '
         'Tutto in locale, sul tuo computer.',
     'Snella takes your photos, straightens them, resizes them to the widths you need, '
         'strips EXIF and GPS data and saves them as WebP or JPEG with SEO-ready names. '
+        'It does the same with videos: light MP4 and WebM, muted if you like, with a poster. '
         'Everything runs locally, on your computer.',
   );
   String get close => t('Chiudi', 'Close');

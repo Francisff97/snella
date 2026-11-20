@@ -38,12 +38,21 @@ class SnellaSettings {
 
 /// Un file generato.
 class OutputFile {
-  const OutputFile({required this.path, required this.width, required this.height, required this.bytes});
+  const OutputFile({
+    required this.path,
+    required this.width,
+    required this.height,
+    required this.bytes,
+    this.isPoster = false,
+  });
 
   final String path;
   final int width;
   final int height;
   final int bytes;
+
+  /// L'immagine di copertina di un video.
+  final bool isPoster;
 
   String get name => p.basename(path);
 }
@@ -57,6 +66,7 @@ class SourceResult {
     required this.outputs,
     required this.alt,
     this.error,
+    this.isVideo = false,
   });
 
   final String sourcePath;
@@ -65,6 +75,7 @@ class SourceResult {
   final List<OutputFile> outputs;
   final String alt;
   final String? error;
+  final bool isVideo;
 
   bool get ok => error == null;
   int get outputBytes => outputs.fold(0, (sum, o) => sum + o.bytes);
@@ -315,7 +326,7 @@ String _htmlEscape(String s) =>
 /// Un tag <img> con srcset per ogni foto, pronto da incollare.
 String buildSrcsetHtml(List<SourceResult> results) {
   final buffer = StringBuffer()..writeln('<!-- Generato con Snella — francescoferri.me -->');
-  for (final r in results.where((r) => r.ok && r.outputs.isNotEmpty)) {
+  for (final r in results.where((r) => r.ok && !r.isVideo && r.outputs.isNotEmpty)) {
     final sorted = [...r.outputs]..sort((a, b) => a.width - b.width);
     final largest = sorted.last;
     final srcset = sorted.map((o) => '${o.name} ${o.width}w').join(', ');

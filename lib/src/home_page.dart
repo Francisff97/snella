@@ -11,9 +11,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'brand.dart';
 import 'processor.dart';
 import 'strings.dart';
+import 'video.dart';
 import 'widgets.dart';
 
 const _presetWidths = [2560, 1920, 1600, 1200, 800, 480];
+const _videoPresetWidths = [1920, 1280, 960, 720];
+const _durations = [0, 10, 15, 30];
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -36,6 +39,17 @@ class _HomePageState extends State<HomePage> {
   String? _outputDir;
   bool _csv = true;
   bool _srcset = true;
+
+  final _videoFormats = <VideoFormat>{VideoFormat.mp4};
+  final _videoWidths = <int>{1920, 1280};
+  bool _mute = true;
+  bool _poster = true;
+  int _maxSeconds = 0;
+  final _thumbs = <String, String>{};
+  final _videoInfo = <String, VideoInfo>{};
+  int _videoRunning = 0;
+  int _videoTotal = 0;
+  double _videoProgress = 0;
 
   bool _dragging = false;
   bool _running = false;
@@ -60,9 +74,9 @@ class _HomePageState extends State<HomePage> {
       final type = await FileSystemEntity.type(path);
       if (type == FileSystemEntityType.directory) {
         await for (final entity in Directory(path).list(recursive: true, followLinks: false)) {
-          if (entity is File && isSupportedImage(entity.path)) found.add(entity.path);
+          if (entity is File && isSupportedMedia(entity.path)) found.add(entity.path);
         }
-      } else if (type == FileSystemEntityType.file && isSupportedImage(path)) {
+      } else if (type == FileSystemEntityType.file && isSupportedMedia(path)) {
         found.add(path);
       }
     }
@@ -76,13 +90,53 @@ class _HomePageState extends State<HomePage> {
         if (!_files.contains(f)) _files.add(f);
       }
     });
+    _loadVideoPreviews(found.where(isSupportedVideo));
   }
+
+  /// Per i video: un fotogramma per la griglia e la durata.
+  Future<void> _loadVideoPreviews(Iterable<String> videos) async {
+    final list = videos.where((v) => !_thumbs.containsKey(v)).toList();
+    if (list.isEmpty) return;
+    final ffmpeg = await findFfmpeg();
+    if (ffmpeg == null) return;
+    final tmp = await Directory.systemTemp.createTemp('snella-thumbs');
+    for (final v in list) {
+      final info = await probeVideo(ffmpeg, v);
+      final thumb = await extractThumb(
+        ffmpeg,
+        v,
+        p.join(tmp.path, '${_thumbs.length}-${p.basenameWithoutExtension(v)}.jpg'),
+      );
+      if (!mounted) return;
+      setState(() {
+        if (info != null) _videoInfo[v] = info;
+        if (thumb != null) _thumbs[v] = thumb;
+      });
+    }
+  }
+
+  bool get _hasVideos => _files.any(isSupportedVideo);
 
   Future<void> _pickFiles() async {
     const group = XTypeGroup(
-      label: 'Immagini',
-      extensions: ['jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif'],
-      uniformTypeIdentifiers: ['public.image'],
+      label: 'Foto e video',
+      extensions: [
+        'jpg',
+        'jpeg',
+        'png',
+        'webp',
+        'tif',
+        'tiff',
+        'bmp',
+        'gif',
+        'mp4',
+        'mov',
+        'm4v',
+        'webm',
+        'mkv',
+        'avi',
+      ],
+      uniformTypeIdentifiers: ['public.image', 'public.movie'],
     );
     final picked = await openFiles(acceptedTypeGroups: [group]);
     if (picked.isNotEmpty) await _addPaths(picked.map((f) => f.path));
@@ -108,7 +162,11 @@ class _HomePageState extends State<HomePage> {
   // -------------------------------------------------------------------------
 
   Future<void> _run() async {
-    if (_files.isEmpty || _widths.isEmpty || _running) return;
+    if (_files.isEmpty || _running) return;
+    final images = _files.where(isSupportedImage).toList();
+    final videos = _files.where(isSupportedVideo).toList();
+    if (images.isNotEmpty && _widths.isEmpty) return;
+    if (videos.isNotEmpty && (_videoWidths.isEmpty || _videoFormats.isEmpty)) return;
 
     final outDir = _outputDir ?? p.join(p.dirname(_files.first), 'snella-web');
     final settings = SnellaSettings(
@@ -119,28 +177,36 @@ class _HomePageState extends State<HomePage> {
       outputDir: outDir,
     );
 
-    // Numeri progressivi solo se più foto finirebbero con lo stesso nome.
-    final bases = _files.map((f) => baseNameFor(f, settings.keyword)).toList();
-    final numbered = bases.toSet().length != bases.length;
+    // Numeri progressivi solo se più file finirebbero con lo stesso nome.
+    bool needsNumbers(List<String> list) {
+      final bases = list.map((f) => baseNameFor(f, settings.keyword)).toList();
+      return bases.toSet().length != bases.length;
+    }
+
+    final numberedImages = needsNumbers(images);
+    final numberedVideos = needsNumbers(videos);
 
     setState(() {
       _running = true;
       _done = 0;
+      _videoRunning = 0;
+      _videoTotal = videos.length;
+      _videoProgress = 0;
     });
 
-    final files = List<String>.from(_files);
-    final results = List<SourceResult?>.filled(files.length, null);
+    // Foto: in parallelo, ognuna nel suo isolate.
+    final results = List<SourceResult?>.filled(images.length, null);
     var next = 0;
     final workers = math.max(1, math.min(3, Platform.numberOfProcessors - 1));
 
     Future<void> worker() async {
       while (true) {
         final i = next++;
-        if (i >= files.length) return;
+        if (i >= images.length) return;
         results[i] = await processInBackground(
-          sourcePath: files[i],
+          sourcePath: images[i],
           index: i + 1,
-          numbered: numbered,
+          numbered: numberedImages,
           settings: settings,
         );
         if (mounted) setState(() => _done++);
@@ -150,16 +216,69 @@ class _HomePageState extends State<HomePage> {
     await Future.wait(List.generate(workers, (_) => worker()));
     final done = results.whereType<SourceResult>().toList();
 
+    // Video: uno alla volta, ffmpeg usa già tutti i core.
+    if (videos.isNotEmpty) {
+      final ffmpeg = await findFfmpeg();
+      final videoSettings = VideoSettings(
+        formats: {..._videoFormats},
+        widths: _videoWidths.toList(),
+        quality: _quality,
+        mute: _mute,
+        maxSeconds: _maxSeconds,
+        poster: _poster,
+      );
+      for (var i = 0; i < videos.length; i++) {
+        if (mounted) {
+          setState(() {
+            _videoRunning = i + 1;
+            _videoProgress = 0;
+          });
+        }
+        if (ffmpeg == null) {
+          done.add(
+            SourceResult(
+              sourcePath: videos[i],
+              sourceBytes: 0,
+              index: i + 1,
+              outputs: const [],
+              alt: '',
+              error: 'no-ffmpeg',
+              isVideo: true,
+            ),
+          );
+        } else {
+          done.add(
+            await processVideoFile(
+              ffmpeg: ffmpeg,
+              sourcePath: videos[i],
+              index: i + 1,
+              numbered: numberedVideos,
+              keyword: settings.keyword,
+              outputDir: outDir,
+              settings: videoSettings,
+              posterFormat: _format,
+              posterQuality: _quality,
+              onProgress: (v) {
+                if (mounted) setState(() => _videoProgress = v);
+              },
+            ),
+          );
+        }
+        if (mounted) setState(() => _done++);
+      }
+    }
+
     try {
       await Directory(outDir).create(recursive: true);
       if (_csv && done.any((r) => r.ok)) {
         await File(p.join(outDir, 'snella-alt.csv')).writeAsString(buildCsv(done));
       }
       if (_srcset && done.any((r) => r.ok)) {
-        await File(p.join(outDir, 'snella-srcset.html')).writeAsString(buildSrcsetHtml(done));
+        await File(p.join(outDir, 'snella-srcset.html'))
+            .writeAsString(buildSrcsetHtml(done) + buildVideoHtml(done, mute: _mute));
       }
     } catch (_) {
-      // Le foto sono già salvate: se gli extra non si scrivono, pazienza.
+      // I file sono già salvati: se gli extra non si scrivono, pazienza.
     }
 
     if (!mounted) return;
@@ -168,6 +287,13 @@ class _HomePageState extends State<HomePage> {
       _results = done;
       _lastOutputDir = outDir;
     });
+  }
+
+  String get _workingLabel {
+    if (_videoRunning > 0) {
+      return s.workingVideo(_videoRunning, _videoTotal, (_videoProgress * 100).round());
+    }
+    return s.working(_done, _files.length);
   }
 
   void _reset() => setState(() {
@@ -307,10 +433,13 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.fromLTRB(24, 20, 20, 16),
           child: Row(
             children: [
-              Text(s.photos(_files.length).toUpperCase(), style: FD.displayStyle(28)),
+              Text(
+                s.items(_files.where(isSupportedImage).length, _files.where(isSupportedVideo).length).toUpperCase(),
+                style: FD.displayStyle(28),
+              ),
               const Spacer(),
               if (_running)
-                Text(s.working(_done, _files.length).toUpperCase(), style: FD.monoStyle(color: FD.accent))
+                Text(_workingLabel.toUpperCase(), style: FD.monoStyle(color: FD.accent))
               else ...[
                 FDTextLink(label: '+ ${s.chooseFiles}', onTap: _pickFiles),
                 const SizedBox(width: 20),
@@ -321,7 +450,7 @@ class _HomePageState extends State<HomePage> {
         ),
         if (_running)
           LinearProgressIndicator(
-            value: _files.isEmpty ? null : _done / _files.length,
+            value: _files.isEmpty ? null : (_done + (_videoRunning > 0 ? _videoProgress : 0)) / _files.length,
             minHeight: 1,
             backgroundColor: FD.lineSoft,
             color: FD.accent,
@@ -338,8 +467,12 @@ class _HomePageState extends State<HomePage> {
               childAspectRatio: 0.82,
             ),
             itemCount: _files.length,
-            itemBuilder: (context, i) =>
-                _Thumb(path: _files[i], onRemove: _running ? null : () => setState(() => _files.removeAt(i))),
+            itemBuilder: (context, i) => _Thumb(
+              path: _files[i],
+              preview: _thumbs[_files[i]],
+              info: _videoInfo[_files[i]],
+              onRemove: _running ? null : () => setState(() => _files.removeAt(i)),
+            ),
           ),
         ),
       ],
@@ -349,7 +482,13 @@ class _HomePageState extends State<HomePage> {
   Widget _buildSettings() {
     final allWidths = [..._presetWidths, ..._extraWidths]..sort((a, b) => b - a);
     final outLabel = _outputDir ?? s.outputDefault;
-    final canRun = _files.isNotEmpty && _widths.isNotEmpty && !_running && _results == null;
+    final hasImages = _files.any(isSupportedImage);
+    final canRun =
+        _files.isNotEmpty &&
+        (!hasImages || _widths.isNotEmpty) &&
+        (!_hasVideos || (_videoWidths.isNotEmpty && _videoFormats.isNotEmpty)) &&
+        !_running &&
+        _results == null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -500,6 +639,7 @@ class _HomePageState extends State<HomePage> {
                 onChanged: _running ? null : (v) => setState(() => _srcset = v),
               ),
               FDToggle(label: s.alwaysStripped, value: true, onChanged: null),
+              if (_hasVideos) ..._buildVideoSettings(),
             ],
           ),
         ),
@@ -507,7 +647,7 @@ class _HomePageState extends State<HomePage> {
         Padding(
           padding: const EdgeInsets.all(20),
           child: FDButton(
-            label: _running ? s.working(_done, _files.length) : (_files.isEmpty ? s.addPhotosFirst : s.run),
+            label: _running ? _workingLabel : (_files.isEmpty ? s.addPhotosFirst : s.run),
             big: true,
             filled: true,
             icon: _running ? null : Icons.arrow_forward,
@@ -516,6 +656,68 @@ class _HomePageState extends State<HomePage> {
         ),
       ],
     );
+  }
+
+  List<Widget> _buildVideoSettings() {
+    return [
+      const SizedBox(height: 32),
+      SectionLabel('06', s.video),
+      Text(s.videoFormats.toUpperCase(), style: FD.monoStyle(size: 10)),
+      const SizedBox(height: 10),
+      Row(
+        children: [
+          for (final f in VideoFormat.values) ...[
+            FDChip(
+              label: f.label,
+              selected: _videoFormats.contains(f),
+              onTap: () => setState(() {
+                if (_videoFormats.contains(f)) {
+                  if (_videoFormats.length > 1) _videoFormats.remove(f);
+                } else {
+                  _videoFormats.add(f);
+                }
+              }),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ],
+      ),
+      const SizedBox(height: 10),
+      Text(s.videoHelp, style: const TextStyle(fontSize: 12, height: 1.4, color: FD.muted)),
+      const SizedBox(height: 20),
+      Text(s.videoWidths.toUpperCase(), style: FD.monoStyle(size: 10)),
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final w in _videoPresetWidths)
+            FDChip(
+              label: '$w',
+              selected: _videoWidths.contains(w),
+              onTap: () => setState(() => _videoWidths.contains(w) ? _videoWidths.remove(w) : _videoWidths.add(w)),
+            ),
+        ],
+      ),
+      const SizedBox(height: 20),
+      Text(s.duration.toUpperCase(), style: FD.monoStyle(size: 10)),
+      const SizedBox(height: 10),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final d in _durations)
+            FDChip(
+              label: d == 0 ? s.whole : '$d s',
+              selected: _maxSeconds == d,
+              onTap: () => setState(() => _maxSeconds = d),
+            ),
+        ],
+      ),
+      const SizedBox(height: 16),
+      FDToggle(label: s.mute, value: _mute, onChanged: _running ? null : (v) => setState(() => _mute = v)),
+      FDToggle(label: s.poster, value: _poster, onChanged: _running ? null : (v) => setState(() => _poster = v)),
+    ];
   }
 
   void _showAbout() {
@@ -640,14 +842,23 @@ class _Footer extends StatelessWidget {
 }
 
 class _Thumb extends StatelessWidget {
-  const _Thumb({required this.path, required this.onRemove});
+  const _Thumb({required this.path, required this.onRemove, this.preview, this.info});
 
   final String path;
   final VoidCallback? onRemove;
 
+  /// Per i video: il fotogramma estratto con ffmpeg.
+  final String? preview;
+  final VideoInfo? info;
+
   @override
   Widget build(BuildContext context) {
     final size = File(path).existsSync() ? File(path).lengthSync() : 0;
+    final video = isSupportedVideo(path);
+    final imagePath = video ? preview : path;
+    final placeholder = Center(
+      child: Text(p.extension(path).replaceAll('.', '').toUpperCase(), style: FD.monoStyle(size: 12)),
+    );
     return Container(
       decoration: BoxDecoration(
         color: FD.surface,
@@ -660,15 +871,36 @@ class _Thumb extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Image.file(
-                  File(path),
-                  fit: BoxFit.cover,
-                  cacheWidth: 360,
-                  filterQuality: FilterQuality.medium,
-                  errorBuilder: (_, _, _) => Center(
-                    child: Text(p.extension(path).replaceAll('.', '').toUpperCase(), style: FD.monoStyle(size: 12)),
+                if (imagePath == null)
+                  placeholder
+                else
+                  Image.file(
+                    File(imagePath),
+                    fit: BoxFit.cover,
+                    cacheWidth: 360,
+                    filterQuality: FilterQuality.medium,
+                    errorBuilder: (_, _, _) => placeholder,
                   ),
-                ),
+                if (video)
+                  Positioned(
+                    left: 6,
+                    bottom: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                      color: Colors.black.withValues(alpha: 0.7),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.play_arrow, size: 11, color: FD.text),
+                          const SizedBox(width: 4),
+                          Text(
+                            info == null ? 'VIDEO' : formatDuration(info!.duration),
+                            style: FD.monoStyle(size: 9, color: FD.text),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 if (onRemove != null)
                   Positioned(
                     top: 6,
@@ -701,7 +933,12 @@ class _Thumb extends StatelessWidget {
                   style: const TextStyle(fontSize: 11.5, color: FD.text),
                 ),
                 const SizedBox(height: 2),
-                Text(formatBytes(size), style: FD.monoStyle(size: 9.5)),
+                Text(
+                  info == null ? formatBytes(size) : '${formatBytes(size)} · ${resolutionLabel(info!)}',
+                  style: FD.monoStyle(size: 9.5),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ],
             ),
           ),
@@ -772,11 +1009,20 @@ class _ResultsView extends StatelessWidget {
         for (final r in failed)
           _ResultRow(
             name: p.basename(r.sourcePath),
-            meta: r.error == 'unreadable' ? s.errorUnreadable : s.errorGeneric,
+            meta: r.error == 'unreadable'
+                ? s.errorUnreadable
+                : r.error == 'no-ffmpeg'
+                ? s.noFfmpeg
+                : s.errorGeneric,
             size: '',
             error: true,
           ),
-        for (final o in outputs) _ResultRow(name: o.name, meta: '${o.width} × ${o.height}', size: formatBytes(o.bytes)),
+        for (final o in outputs)
+          _ResultRow(
+            name: o.name,
+            meta: o.isPoster ? '${o.width} × ${o.height} · POSTER' : '${o.width} × ${o.height}',
+            size: formatBytes(o.bytes),
+          ),
       ],
     );
   }
@@ -807,7 +1053,7 @@ class _ResultRow extends StatelessWidget {
             ),
           ),
           SizedBox(
-            width: 140,
+            width: 200,
             child: Text(meta, style: FD.monoStyle(size: 10.5, color: error ? FD.danger : FD.muted)),
           ),
           SizedBox(

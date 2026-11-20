@@ -90,7 +90,7 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "Francesco Design" "\0"
-            VALUE "FileDescription", "Snella - foto pronte per il web" "\0"
+            VALUE "FileDescription", "Snella - foto e video pronti per il web" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "snella" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 Francesco Ferri - francescoferri.me" "\0"

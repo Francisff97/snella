@@ -1,0 +1,14 @@
+Snella usa FFmpeg per i video.
+
+L'eseguibile ffmpeg incluso negli zip di Snella è una build statica di
+FFmpeg (https://ffmpeg.org) distribuita dal progetto ffmpeg-static
+(https://github.com/eugeneware/ffmpeg-static, release b6.0).
+
+FFmpeg è un programma separato, distribuito sotto licenza GNU GPL v3:
+https://www.gnu.org/licenses/gpl-3.0.html
+Il codice sorgente di FFmpeg è disponibile su https://ffmpeg.org/download.html
+e le istruzioni di build della versione inclusa su
+https://github.com/eugeneware/ffmpeg-static.
+
+Snella lo avvia come processo esterno e non ne modifica il codice.
+Il codice di Snella resta sotto licenza MIT (vedi LICENSE).
